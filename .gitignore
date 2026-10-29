@@ -1,0 +1,20 @@
+# Audio and benchmark artifacts — never commit
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.flac
+*.opus
+*.rttm
+bench/data/
+results.sqlite
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
