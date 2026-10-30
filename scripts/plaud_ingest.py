@@ -1,8 +1,9 @@
 """Download one Plaud recording into ~/recordings/plaud/audio/ and file it in folders.csv.
 
 Detects the format from the bytes (MP3, Ogg Opus, or Plaud raw Opus, which is wrapped
-losslessly into Ogg with the raw original kept in raw/). Verifies Content-Length and the
-API's duration before the file gets its final name. Never prints the presigned URL.
+losslessly into Ogg with the raw original kept in raw/). Verifies Content-Length, a clean
+ffmpeg decode and the API's duration before the file gets its final name, and keeps nothing
+from a download that fails them, so it can be retried. Never prints the presigned URL.
 
 usage: python3 -I scripts/plaud_ingest.py <file_id> <folder> [max_drift_s=3]
 """
@@ -59,17 +60,27 @@ stem = f"{local:%Y-%m-%d_%H%M}_{fid}"
 out, tmp = AUDIO / f"{stem}.{ext}", AUDIO / f"_{stem}.{ext}"
 if out.exists():
     sys.exit(f"{out} already exists")
+raw = None
 if kind == "raw-opus":
-    write_private(RAW / f"{stem}.opus", body)
-    body = wrap(body)
+    raw, body = body, wrap(body)
 write_private(tmp, body)
 
+def refuse(msg):
+    tmp.unlink()
+    sys.exit(msg)
+
+decode = subprocess.run(["ffmpeg", "-v", "error", "-i", str(tmp), "-f", "null", "-"], capture_output=True, text=True)
+errors = decode.stderr.strip().splitlines()
+if decode.returncode or errors:
+    refuse(f"decode errors: {len(errors)} lines (exit {decode.returncode})")
 probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(tmp)],
                        capture_output=True, text=True)
 drift = float(probe.stdout.strip() or "nan") - d["duration"] / 1000
 if probe.returncode or not abs(drift) <= max_drift:
-    tmp.unlink()
-    sys.exit(f"duration check failed: drift {drift:+.1f}s {probe.stderr.strip()[:200]}")
+    refuse(f"duration check failed: drift {drift:+.1f}s {probe.stderr.strip()[:200]}")
+# Kept only now, so a refused download leaves nothing behind to block its retry.
+if raw is not None:
+    write_private(RAW / f"{stem}.opus", raw)
 tmp.replace(out)
 
 processed = "yes" if (d.get("source_list") or d.get("note_list")) else "no"
